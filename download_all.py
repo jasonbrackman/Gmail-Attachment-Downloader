@@ -2,7 +2,7 @@
 # Make sure you have IMAP enabled in your gmail settings.
 # If you are using 2 step verification you may need an APP Password.
 # https://support.google.com/accounts/answer/185833
-#
+
 
 import email
 import hashlib
@@ -27,40 +27,50 @@ def get_hash(file_to_hash):
                 hasher.update(buf)
                 buf = afile.read(blocksize)
     except IOError as err:
-        print err
+        print(err)
     return hasher.hexdigest()
 
 
-detach_dir = '.'
-if 'attachments' not in os.listdir(detach_dir):
-    os.mkdir('attachments')
+def make_attachement_directory(path):
+    if 'attachments' not in os.listdir(path):
+        os.mkdir('attachments')
 
-userName = raw_input('Enter your GMail username: ')
+    return path
+
+detach_dir = make_attachement_directory('.')
+
+userName = input('Enter your GMail username: ')
 password = getpass.getpass('Enter your password: ')
 
 imapSession = imaplib.IMAP4_SSL('imap.gmail.com')
-typ, accountDetails = imapSession.login(userName, passwd)
+typ, accountDetails = imapSession.login(userName, password)
+print("Return [{0}]: {1}".format(typ, accountDetails[0]))
 
-print typ
-print accountDetails
 if typ != 'OK':
-    print 'Not able to sign in!'
-    raise
+    print('Not able to sign in!')
 
-imapSession.select('[Gmail]/All Mail')
-typ, data = imapSession.search(None, 'ALL')
+# Reveal valid names of folders to 'select'
+print(imapSession.list())
+# note the quotes being passed in
+imapSession.select('"[Gmail]/Sent Mail"')
+
+
+#typ, data = imapSession.search(None, 'ALL')
+typ, data = imapSession.search(None, '(X-GM-RAW "has:attachment")')
+print("Return [{0}]: {1}".format(typ, data[0]))
+
 if typ != 'OK':
-    print 'Error searching Inbox.'
-    raise
+    print('Error searching Inbox.')
 
 # Iterating over all emails
 for msgId in data[0].split():
     typ, messageParts = imapSession.fetch(msgId, '(RFC822)')
+    # print("Return [{0}]: {1}".format(typ, messageParts[0][1]))
     if typ != 'OK':
-        print 'Error fetching mail.'
-        raise
+        print('Error fetching mail.')
+
     emailBody = messageParts[0][1]
-    mail = email.message_from_string(emailBody)
+    mail = email.message_from_bytes(emailBody)
     for part in mail.walk():
         if part.get_content_maintype() == 'multipart':
             # print part.as_string()
@@ -76,14 +86,18 @@ for msgId in data[0].split():
             if os.path.isfile(filePath):
                 os.remove(filePath)
             if not os.path.isfile(filePath):
-                # print 'Processing: {file}'.format(file=fileName)
-                fp = open(filePath, 'wb')
-                fp.write(part.get_payload(decode=True))
-                fp.close()
-                x_hash = get_hash(filePath)
+                try:
+                    # print 'Processing: {file}'.format(file=fileName)
+                    fp = open(filePath, 'wb')
+                    fp.write(part.get_payload(decode=True))
+                    fp.close()
+                    x_hash = get_hash(filePath)
+                except Exception as e:
+                    print(e)
+                    x_hash = get_hash(filePath)
 
                 if x_hash in fileNameList_dict[fileName]:
-                    print '\tSkipping duplicate file: {file}'.format(file=fileName)
+                    print('\tSkipping duplicate file: {file}'.format(file=fileName))
 
                 else:
                     fileNameCount_dict[fileName] += 1
@@ -97,19 +111,18 @@ for msgId in data[0].split():
                     hash_path = os.path.join(detach_dir, 'attachments', new_fileName)
                     if not os.path.isfile(hash_path):
                         if new_fileName == fileName:
-                            print '\tStoring: {file}'.format(file=fileName)
+                            print('\tStoring: {file}'.format(file=fileName))
                         else:
                             print('\tRenaming and storing: {file} to {new_file}'.format(file=fileName,
                                                                                         new_file=new_fileName))
                         try:
                             os.rename(filePath, hash_path)
                         except:
-                            print 'Could not store: {file} it has a shitty file name or path under {op_sys}.'.format(
-                                file=hash_path, op_sys=platform.system())
+                            print('Could not store: {file} it has a shitty file name or path under {op_sys}.'.format(
+                                file=hash_path, op_sys=platform.system()))
                     elif os.path.isfile(hash_path):
-                        print '\tExists in destination: {file}'.format(file=new_fileName)
+                        print('\tExists in destination: {file}'.format(file=new_fileName))
                 if os.path.isfile(filePath):
                     os.remove(filePath)
-
 imapSession.close()
 imapSession.logout()
