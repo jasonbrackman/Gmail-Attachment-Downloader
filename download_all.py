@@ -16,14 +16,14 @@ import platform
 
 def get_hash(file_to_hash):
     # return unique hash of file
-    blocksize = 65536
+    block_size = 65536
     hasher = hashlib.md5()
     try:
-        with open(file_to_hash, 'rb') as afile:
-            buf = afile.read(blocksize)
+        with open(file_to_hash, 'rb') as handle:
+            buf = handle.read(block_size)
             while len(buf) > 0:
                 hasher.update(buf)
-                buf = afile.read(blocksize)
+                buf = handle.read(block_size)
     except IOError as err:
         print(err)
     return hasher.hexdigest()
@@ -89,16 +89,7 @@ def gmail_login(username, password):
     return mail
 
 
-if __name__ == "__main__":
-
-    # Get Gmail login credentials
-    username = input('Enter your GMail username: ')
-    password = getpass.getpass('Enter your password: ')
-
-    mail = gmail_login(username, password)
-
-    # get message IDs for the Gmail label of interest
-    message_IDs = get_gmail_messages_with_attachments_by_label(mail, '[Gmail]/All Mail')
+def get_gmail_attachments_for_message_ids(mail, message_IDs, filter_set=None):
 
     # setup caching of names/data gleaned from attachments
     fileNameCount_dict = defaultdict(int)
@@ -115,7 +106,14 @@ if __name__ == "__main__":
             print('Error fetching mail.')
 
         emailBody = message_parts[0][1]
-        message = email.message_from_bytes(emailBody)
+
+        # Message decoding for python 3 is bytes, python 2 expects str
+        message_from = email.message_from_bytes
+        if type(emailBody) == str:
+            # python 2 expects str
+            message_from = email.message_from_string
+
+        message = message_from(emailBody)
         for part in message.walk():
             if part.get_content_maintype() == 'multipart':
                 # print part.as_string()
@@ -123,10 +121,14 @@ if __name__ == "__main__":
             if part.get('Content-Disposition') is None:
                 # print part.as_string()
                 continue
-            fileName = part.get_filename()
-            if fileName is not None:
-                fileName = ''.join(x for x in fileName.splitlines())
-            if bool(fileName):
+            filename = part.get_filename()
+
+            if filename is not None:
+                if filter_set is not None and not filename.lower().endswith(filter_set):
+                    print(filename)
+                    continue
+                filename = ''.join(x for x in filename.splitlines())
+            if bool(filename):
                 filePath = os.path.join(attachment_directory, 'temp.attachment')
                 if os.path.isfile(filePath):
                     os.remove(filePath)
@@ -141,30 +143,31 @@ if __name__ == "__main__":
                         print(e)
                         x_hash = get_hash(filePath)
 
-                    if x_hash in fileNameList_dict[fileName]:
-                        print('\tSkipping duplicate file: {file}'.format(file=fileName))
+                    if x_hash in fileNameList_dict[filename]:
+                        print('\tSkipping duplicate file: {file}'.format(file=filename))
 
                     else:
-                        fileNameCount_dict[fileName] += 1
-                        fileStr, fileExtension = os.path.splitext(fileName)
-                        if fileNameCount_dict[fileName] > 1:
-                            new_fileName = '{file}({suffix}){ext}'.format(suffix=fileNameCount_dict[fileName],
+                        fileNameCount_dict[filename] += 1
+                        fileStr, fileExtension = os.path.splitext(filename)
+                        if fileNameCount_dict[filename] > 1:
+                            new_fileName = '{file}({suffix}){ext}'.format(suffix=fileNameCount_dict[filename],
                                                                           file=fileStr, ext=fileExtension)
                         else:
-                            new_fileName = fileName
-                        fileNameList_dict[fileName].append(x_hash)
-                        hash_path = os.path.join(attachment_directory, 'attachments', new_fileName)
+                            new_fileName = filename
+                        fileNameList_dict[filename].append(x_hash)
+                        hash_path = os.path.join(attachment_directory, new_fileName)
                         if not os.path.isfile(hash_path):
-                            if new_fileName == fileName:
-                                print('\tStoring: {file}'.format(file=fileName))
+                            if new_fileName == filename:
+                                print('\tStoring: {file}'.format(file=filename))
                             else:
-                                print('\tRenaming and storing: {file} to {new_file}'.format(file=fileName,
+                                print('\tRenaming and storing: {file} to {new_file}'.format(file=filename,
                                                                                             new_file=new_fileName))
                             try:
                                 os.rename(filePath, hash_path)
-                            except:
+                            except Exception as e:
+                                print(type(e))
                                 print(
-                                    'Could not store: {file} it has an invalid file name or path under {op_sys}.'.format(
+                                    'Could not store: {file} (invalid filename or path under {op_sys}.'.format(
                                         file=hash_path, op_sys=platform.system()))
                         elif os.path.isfile(hash_path):
                             print('\tExists in destination: {file}'.format(file=new_fileName))
@@ -173,3 +176,22 @@ if __name__ == "__main__":
 
     # mail.close()
     # mail.logout()
+
+if __name__ == "__main__":
+
+    # Get Gmail login credentials
+    username = input('Enter your GMail username: ')
+    password = getpass.getpass('Enter your password: ')
+
+    mail = gmail_login(username, password)
+
+    # get message IDs for the Gmail label of interest
+    message_IDs = get_gmail_messages_with_attachments_by_label(mail, '[Gmail]/All Mail')
+    message_IDs = message_IDs[0].split()
+
+    # reduce what is actually downloaded to extensions you care about
+    # - NOTE: if only one item a set is written like this, filters = (".jpg", ) <-- note the comma
+    filters = (".jpg", ".gif")
+
+    # filter out files of a specific type
+    get_gmail_attachments_for_message_ids(mail, message_IDs, filter_set=filters)
